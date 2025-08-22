@@ -58,7 +58,6 @@ public class Office365RestClient {
 
     public Office365RestClient(final Office365AuthenticationInterface authConfig,
                                final PluginMetrics pluginMetrics) {
-        // TODO: Abstract into a Office365PluginMetrics
         this.authConfig = authConfig;
         this.auditLogFetchLatencyTimer = pluginMetrics.timer(AUDIT_LOG_FETCH_LATENCY);
         this.searchCallLatencyTimer = pluginMetrics.timer(SEARCH_CALL_LATENCY);
@@ -75,7 +74,6 @@ public class Office365RestClient {
         log.info("Starting Office 365 subscriptions for audit logs");
         try {
             HttpHeaders headers = new HttpHeaders();
-
             headers.setContentType(MediaType.APPLICATION_JSON);
 
             // TODO: Only start the subscriptions only if the call commented
@@ -142,9 +140,9 @@ public class Office365RestClient {
      * @return AuditLogsResponse containing the list of audit log entries and the next page URI
      */
     public AuditLogsResponse searchAuditLogs(final String contentType,
-                                                     final Instant startTime,
-                                                     final Instant endTime,
-                                                     String pageUri) {
+                                             final Instant startTime,
+                                             final Instant endTime,
+                                             String pageUri) {
         final String GET_AUDIT_LOGS_URL = MANAGEMENT_API_BASE_URL +
                 "%s/activity/feed/subscriptions/content?contentType=%s&startTime=%s&endTime=%s";
 
@@ -178,6 +176,7 @@ public class Office365RestClient {
                             if (nextPageUri != null) {
                                 log.debug("Next page URI found: {}", nextPageUri);
                             }
+
                             return new AuditLogsResponse(response.getBody(), nextPageUri);
                         },
                         authConfig::renewCredentials
@@ -190,31 +189,23 @@ public class Office365RestClient {
         });
     }
 
+
     /**
-     * Retrieves a specific audit log entry by its content ID.
-     * Implements retry with exponential backoff for recoverable errors.
+     * Retrieves the audit log content from a specific content URI.
      *
-     * @param contentId the ID of the audit log entry to retrieve
-     * @return the audit log entry as a string
+     * @param contentUri the URI of the audit log content
+     * @return the audit log content as a string
      */
-    public String getAuditLog(final String contentId) {
+    public String getAuditLog(String contentUri) {
         auditLogsRequestedCounter.increment();
-
-        final String FETCH_AUDIT_LOG_URL = MANAGEMENT_API_BASE_URL + "%s/activity/feed/audit/%s";
-
-        final String url = String.format(FETCH_AUDIT_LOG_URL,
-                authConfig.getTenantId(),
-                contentId);
-
         final HttpHeaders headers = new HttpHeaders();
 
         return auditLogFetchLatencyTimer.record(() -> {
             try {
                 String response = RetryHandler.executeWithRetry(() -> {
                     headers.setBearerAuth(authConfig.getAccessToken());
-
                     return restTemplate.exchange(
-                            url,
+                            contentUri,
                             HttpMethod.GET,
                             new HttpEntity<>(headers),
                             String.class
@@ -223,10 +214,11 @@ public class Office365RestClient {
                 auditLogRequestsSuccessCounter.increment();
                 return response;
             } catch (Exception e) {
-                log.error(NOISY, "Error while fetching audit log with ID {}", contentId, e);
+                log.error(NOISY, "Error while fetching audit log content from URI: {}", contentUri, e);
                 auditLogRequestsFailedCounter.increment();
                 throw new RuntimeException("Failed to fetch audit log", e);
             }
         });
     }
+
 }
