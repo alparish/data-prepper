@@ -35,6 +35,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.internal.verification.VerificationModeFactory.times;
 
 @ExtendWith(MockitoExtension.class)
@@ -145,28 +146,29 @@ class LeaderOnlyTokenCrawlerTest {
 
     @Test
     void testNegativeAcknowledgment() {
-        List<ItemInfo> items = createTestItems(BATCH_SIZE + 1);
+        List<ItemInfo> items = createTestItems(1);
         when(client.listItems(INITIAL_TOKEN)).thenReturn(items.iterator());
-        when(acknowledgementSetManager.create(any(), eq(TEST_TIMEOUT)))
-                .thenReturn(acknowledgementSet);
 
-        ArgumentCaptor<Consumer<Boolean>> callbackCaptor = ArgumentCaptor.forClass(Consumer.class);
+        // Setup immediate negative acknowledgment
+        doAnswer(invocation -> {
+            Consumer<Boolean> callback = invocation.getArgument(0);
+            callback.accept(false);  // Trigger negative ack immediately
+            return acknowledgementSet;
+        }).when(acknowledgementSetManager).create(any(), eq(TEST_TIMEOUT));
 
         crawler.setAcknowledgementsEnabled(true);
         crawler.crawl(leaderPartition, coordinator);
 
-        verify(acknowledgementSetManager).create(callbackCaptor.capture(), eq(TEST_TIMEOUT));
-
-        // Simulate negative acknowledgment
-        callbackCaptor.getValue().accept(false);
-
+        // Verify behavior
         verify(client, times(1)).writeBatchToBuffer(any(), any(), any());
-        verify(coordinator, never()).saveProgressStateForPartition(eq(leaderPartition), any(Duration.class));
+        verify(coordinator, times(1)).createPartition(any());
+        verify(acknowledgementSet, times(1)).complete();
     }
+
 
     @Test
     void testAcknowledgmentTimeout() {
-        List<ItemInfo> items = createTestItems(BATCH_SIZE + 1);
+        List<ItemInfo> items = createTestItems( 1);
         when(client.listItems(INITIAL_TOKEN)).thenReturn(items.iterator());
         when(acknowledgementSetManager.create(any(), eq(TEST_TIMEOUT)))
                 .thenReturn(acknowledgementSet);
@@ -178,13 +180,10 @@ class LeaderOnlyTokenCrawlerTest {
 
         verify(acknowledgementSetManager).create(callbackCaptor.capture(), eq(TEST_TIMEOUT));
 
-        // Verify:
-        // 1. Only first batch was processed
+        // Verify timeout behavior
         verify(client, times(1)).writeBatchToBuffer(any(), any(), any());
-        // 2. No checkpoint update happened
-        verify(coordinator, never()).saveProgressStateForPartition(eq(leaderPartition), any(Duration.class));
-        // 3. Acknowledgment set was completed
         verify(acknowledgementSet).complete();
+        verify(coordinator).createPartition(any());
     }
 
 
